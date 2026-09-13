@@ -610,9 +610,14 @@ static int __initdata do_skip_initramfs;
 
 static int __init skip_initramfs_param(char *str)
 {
+	/*
+	 * chef-cyclo: the Motorola bootloader appends skip_initramfs to the
+	 * command line unconditionally (system-as-root A/B). We always want
+	 * the ramdisk from the boot image, so accept and ignore the parameter.
+	 */
 	if (*str)
 		return 0;
-	do_skip_initramfs = 1;
+	pr_info("initramfs: ignoring skip_initramfs\n");
 	return 1;
 }
 __setup("skip_initramfs", skip_initramfs_param);
