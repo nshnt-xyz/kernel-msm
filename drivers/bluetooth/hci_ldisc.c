@@ -285,14 +285,37 @@ bool hci_uart_has_flow_control(struct hci_uart *hu)
 	return false;
 }
 
+/* Drive the RTS modem line; most UARTs also need OUT2 for interrupts */
+static void hci_uart_set_rts(struct hci_uart *hu, bool assert)
+{
+	struct tty_struct *tty = hu->tty;
+	unsigned int set = 0;
+	unsigned int clear = 0;
+	int status;
+
+	status = tty->driver->ops->tiocmget(tty);
+	BT_DBG("Current tiocm 0x%x", status);
+
+	if (assert)
+		set |= (TIOCM_OUT2 | TIOCM_RTS);
+	else
+		set &= ~(TIOCM_OUT2 | TIOCM_RTS);
+	clear = ~set;
+	set &= TIOCM_DTR | TIOCM_RTS | TIOCM_OUT1 |
+	       TIOCM_OUT2 | TIOCM_LOOP;
+	clear &= TIOCM_DTR | TIOCM_RTS | TIOCM_OUT1 |
+		 TIOCM_OUT2 | TIOCM_LOOP;
+	status = tty->driver->ops->tiocmset(tty, set, clear);
+	BT_DBG("%s RTS: %s", assert ? "Setting" : "Clearing",
+	       status ? "failed" : "success");
+}
+
 /* Flow control or un-flow control the device */
 void hci_uart_set_flow_control(struct hci_uart *hu, bool enable)
 {
 	struct tty_struct *tty = hu->tty;
 	struct ktermios ktermios;
 	int status;
-	unsigned int set = 0;
-	unsigned int clear = 0;
 
 	if (enable) {
 		/* Disable hardware flow control */
@@ -303,39 +326,47 @@ void hci_uart_set_flow_control(struct hci_uart *hu, bool enable)
 		       status ? "failed" : "success");
 
 		/* Clear RTS to prevent the device from sending */
-		/* Most UARTs need OUT2 to enable interrupts */
-		status = tty->driver->ops->tiocmget(tty);
-		BT_DBG("Current tiocm 0x%x", status);
-
-		set &= ~(TIOCM_OUT2 | TIOCM_RTS);
-		clear = ~set;
-		set &= TIOCM_DTR | TIOCM_RTS | TIOCM_OUT1 |
-		       TIOCM_OUT2 | TIOCM_LOOP;
-		clear &= TIOCM_DTR | TIOCM_RTS | TIOCM_OUT1 |
-			 TIOCM_OUT2 | TIOCM_LOOP;
-		status = tty->driver->ops->tiocmset(tty, set, clear);
-		BT_DBG("Clearing RTS: %s", status ? "failed" : "success");
+		hci_uart_set_rts(hu, false);
 	} else {
-		/* Set RTS to allow the device to send again */
-		status = tty->driver->ops->tiocmget(tty);
-		BT_DBG("Current tiocm 0x%x", status);
-
-		set |= (TIOCM_OUT2 | TIOCM_RTS);
-		clear = ~set;
-		set &= TIOCM_DTR | TIOCM_RTS | TIOCM_OUT1 |
-		       TIOCM_OUT2 | TIOCM_LOOP;
-		clear &= TIOCM_DTR | TIOCM_RTS | TIOCM_OUT1 |
-			 TIOCM_OUT2 | TIOCM_LOOP;
-		status = tty->driver->ops->tiocmset(tty, set, clear);
-		BT_DBG("Setting RTS: %s", status ? "failed" : "success");
-
-		/* Re-enable hardware flow control */
+		/* Re-enable hardware flow control first: a termios change
+		 * may reset the receiver (msm_serial_hs does), which would
+		 * lose whatever the device sends the moment RTS is asserted.
+		 */
 		ktermios = tty->termios;
 		ktermios.c_cflag |= CRTSCTS;
 		status = tty_set_termios(tty, &ktermios);
 		BT_DBG("Enabling hardware flow control: %s",
 		       status ? "failed" : "success");
+
+		/* Set RTS to allow the device to send again */
+		hci_uart_set_rts(hu, true);
 	}
+}
+
+/* Change the speed and re-enable hardware flow control in one termios
+ * update, then assert RTS.  For a speed change made with flow control
+ * disabled where the device answers at the new speed as soon as the port
+ * is reconfigured (msm_serial_hs asserts RFR on every termios change and
+ * resets the receiver on the next one), so that the answer survives.
+ */
+void hci_uart_set_baudrate_flow_control(struct hci_uart *hu,
+					unsigned int speed)
+{
+	struct tty_struct *tty = hu->tty;
+	struct ktermios ktermios;
+
+	ktermios = tty->termios;
+	ktermios.c_cflag &= ~CBAUD;
+	tty_termios_encode_baud_rate(&ktermios, speed, speed);
+	ktermios.c_cflag |= CRTSCTS;
+
+	/* tty_set_termios() return not checked as it is always 0 */
+	tty_set_termios(tty, &ktermios);
+
+	BT_DBG("%s: New tty speeds: %d/%d, flow control on", hu->hdev->name,
+	       tty->termios.c_ispeed, tty->termios.c_ospeed);
+
+	hci_uart_set_rts(hu, true);
 }
 
 void hci_uart_set_speeds(struct hci_uart *hu, unsigned int init_speed,
