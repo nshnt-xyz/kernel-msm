@@ -489,7 +489,6 @@ static int hci_uart_tty_open(struct tty_struct *tty)
 	INIT_WORK(&hu->init_ready, hci_uart_init_work);
 	INIT_WORK(&hu->write_work, hci_uart_write_work);
 
-	spin_lock_init(&hu->rx_lock);
 	mutex_init(&hu->proto_lock);
 
 	/* Flush any pending characters in the driver and line discipline. */
@@ -523,11 +522,8 @@ static void hci_uart_tty_close(struct tty_struct *tty)
 		return;
 
 	hdev = hu->hdev;
-	if (hdev) {
+	if (hdev)
 		hci_uart_close(hdev);
-		if (test_bit(HCI_UART_REGISTERED, &hu->flags))
-			hci_unregister_dev(hdev);
-	}
 
 	cancel_work_sync(&hu->write_work);
 
@@ -543,10 +539,6 @@ static void hci_uart_tty_close(struct tty_struct *tty)
 		hci_uart_proto_unlock(hu);
 	}
 
-	cancel_work_sync(&hu->write_work);
-
-	if (hdev)
-		hci_free_dev(hdev);
 	mutex_destroy(&hu->proto_lock);
 	kfree(hu);
 }
