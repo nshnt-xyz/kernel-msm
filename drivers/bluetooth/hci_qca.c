@@ -30,6 +30,10 @@
 
 #include <linux/kernel.h>
 #include <linux/debugfs.h>
+#include <linux/delay.h>
+#include <linux/of.h>
+#include <linux/tty.h>
+#include <asm/ioctls.h>
 
 #include <net/bluetooth/bluetooth.h>
 #include <net/bluetooth/hci_core.h>
@@ -45,10 +49,29 @@
 
 /* Controller states */
 #define STATE_IN_BAND_SLEEP_ENABLED	1
+#define QCA_DROP_VENDOR_EVENT		2
 
 #define IBS_WAKE_RETRANS_TIMEOUT_MS	100
 #define IBS_TX_IDLE_TIMEOUT_MS		2000
 #define BAUDRATE_SETTLE_TIMEOUT_MS	300
+#define CMD_TRANS_TIMEOUT_MS		100
+
+/* Which SoC sits on the other end of the line discipline.  Without serdev
+ * there is no device to bind to, so the board's device tree is consulted:
+ * SDM6xx/MSM8998 trees describe the WCN3990 (for its power driver) as a
+ * node compatible with "qca,wcn3990".
+ */
+static enum qca_btsoc_type qca_soc_type_from_dt(void)
+{
+	struct device_node *np;
+
+	np = of_find_compatible_node(NULL, NULL, "qca,wcn3990");
+	if (!np)
+		return QCA_ROME;
+
+	of_node_put(np);
+	return QCA_WCN3990;
+}
 
 /* HCI_IBS transmit side sleep protocol states */
 enum tx_ibs_states {
@@ -92,6 +115,8 @@ struct qca_data {
 	struct work_struct ws_rx_vote_off;
 	struct work_struct ws_tx_vote_off;
 	unsigned long flags;
+	enum qca_btsoc_type soc_type;
+	struct completion drop_ev_comp;
 
 	/* For debugging purpose */
 	u64 ibs_sent_wacks;
@@ -111,24 +136,43 @@ struct qca_data {
 	u64 votes_off;
 };
 
-static void __serial_clock_on(struct tty_struct *tty)
+/* Ask the UART driver to keep its clocks on (or let them go) via the
+ * generic tty power-management ioctls.  On MSM the high-speed UART driver
+ * implements them as a runtime-PM reference (MSM_ENABLE_UART_CLOCK is
+ * TIOCPMGET); after the last put the port autosuspends once idle and the
+ * RX wakeup interrupt injects an IBS wake indication when the controller
+ * talks again.  Drivers without the ioctl simply keep their clocks on.
+ *
+ * This sleeps, so it is called from the IBS workqueue with the lock
+ * dropped, never from serial_clock_vote() itself.
+ */
+static void qca_serial_clock(struct hci_uart *hu, bool on)
 {
-	/* TODO: Some chipset requires to enable UART clock on client
-	 * side to save power consumption or manual work is required.
-	 * Please put your code to control UART clock here if needed
+	struct tty_struct *tty = hu->tty;
+	int err;
+
+	if (!tty->ops->ioctl)
+		return;
+
+	/* From qca_close() the hdev may already be gone and, when the tty is
+	 * being released, the port already shut down (-EIO): the UART driver
+	 * resets its reference count on the next open, so that is fine.
 	 */
+	err = tty->ops->ioctl(tty, on ? TIOCPMGET : TIOCPMPUT, 0);
+	if (err && err != -ENOIOCTLCMD && err != -ENOTTY && err != -EIO)
+		BT_ERR("%s: UART clock %s request failed (%d)",
+		       tty->name, on ? "on" : "off", err);
+	else
+		BT_DBG("%s: UART clock %s (%d)", tty->name,
+		       on ? "on" : "off", err);
 }
 
-static void __serial_clock_off(struct tty_struct *tty)
-{
-	/* TODO: Some chipset requires to disable UART clock on client
-	 * side to save power consumption or manual work is required.
-	 * Please put your code to control UART clock off here if needed
-	 */
-}
-
-/* serial_clock_vote needs to be called with the ibs lock held */
-static void serial_clock_vote(unsigned long vote, struct hci_uart *hu)
+/* serial_clock_vote needs to be called with the ibs lock held.
+ * Returns 1 when the combined vote turned on, -1 when it turned off and
+ * 0 when nothing changed; the caller applies the change with
+ * qca_serial_clock() once the lock is released.
+ */
+static int serial_clock_vote(unsigned long vote, struct hci_uart *hu)
 {
 	struct qca_data *qca = hu->priv;
 	unsigned int diff;
@@ -144,7 +188,7 @@ static void serial_clock_vote(unsigned long vote, struct hci_uart *hu)
 			qca->vote_off_ms += diff;
 		else
 			qca->vote_on_ms += diff;
-		return;
+		return 0;
 
 	case HCI_IBS_TX_VOTE_CLOCK_ON:
 		qca->tx_vote = true;
@@ -172,29 +216,27 @@ static void serial_clock_vote(unsigned long vote, struct hci_uart *hu)
 
 	default:
 		BT_ERR("Voting irregularity");
-		return;
+		return 0;
 	}
 
-	if (new_vote != old_vote) {
-		if (new_vote)
-			__serial_clock_on(hu->tty);
-		else
-			__serial_clock_off(hu->tty);
+	if (new_vote == old_vote)
+		return 0;
 
-		BT_DBG("Vote serial clock %s(%s)", new_vote ? "true" : "false",
-		       vote ? "true" : "false");
+	BT_DBG("Vote serial clock %s(%s)", new_vote ? "true" : "false",
+	       vote ? "true" : "false");
 
-		diff = jiffies_to_msecs(jiffies - qca->vote_last_jif);
+	diff = jiffies_to_msecs(jiffies - qca->vote_last_jif);
 
-		if (new_vote) {
-			qca->votes_on++;
-			qca->vote_off_ms += diff;
-		} else {
-			qca->votes_off++;
-			qca->vote_on_ms += diff;
-		}
-		qca->vote_last_jif = jiffies;
+	if (new_vote) {
+		qca->votes_on++;
+		qca->vote_off_ms += diff;
+	} else {
+		qca->votes_off++;
+		qca->vote_on_ms += diff;
 	}
+	qca->vote_last_jif = jiffies;
+
+	return new_vote ? 1 : -1;
 }
 
 /* Builds and sends an HCI_IBS command packet.
@@ -228,13 +270,22 @@ static void qca_wq_awake_device(struct work_struct *work)
 					    ws_awake_device);
 	struct hci_uart *hu = qca->hu;
 	unsigned long retrans_delay;
+	int clock;
 
 	BT_DBG("hu %p wq awake device", hu);
 
 	spin_lock(&qca->hci_ibs_lock);
 
 	/* Vote for serial clock */
-	serial_clock_vote(HCI_IBS_TX_VOTE_CLOCK_ON, hu);
+	clock = serial_clock_vote(HCI_IBS_TX_VOTE_CLOCK_ON, hu);
+
+	spin_unlock(&qca->hci_ibs_lock);
+
+	/* Bring the UART up before the wake goes out */
+	if (clock > 0)
+		qca_serial_clock(hu, true);
+
+	spin_lock(&qca->hci_ibs_lock);
 
 	/* Send wake indication to device */
 	if (send_hci_ibs_cmd(HCI_IBS_WAKE_IND, hu) < 0)
@@ -257,12 +308,20 @@ static void qca_wq_awake_rx(struct work_struct *work)
 	struct qca_data *qca = container_of(work, struct qca_data,
 					    ws_awake_rx);
 	struct hci_uart *hu = qca->hu;
+	int clock;
 
 	BT_DBG("hu %p wq awake rx", hu);
 
 	spin_lock(&qca->hci_ibs_lock);
 
-	serial_clock_vote(HCI_IBS_RX_VOTE_CLOCK_ON, hu);
+	clock = serial_clock_vote(HCI_IBS_RX_VOTE_CLOCK_ON, hu);
+
+	spin_unlock(&qca->hci_ibs_lock);
+
+	if (clock > 0)
+		qca_serial_clock(hu, true);
+
+	spin_lock(&qca->hci_ibs_lock);
 
 	qca->rx_ibs_state = HCI_IBS_RX_AWAKE;
 
@@ -285,14 +344,18 @@ static void qca_wq_serial_rx_clock_vote_off(struct work_struct *work)
 	struct qca_data *qca = container_of(work, struct qca_data,
 					    ws_rx_vote_off);
 	struct hci_uart *hu = qca->hu;
+	int clock;
 
 	BT_DBG("hu %p rx clock vote off", hu);
 
 	spin_lock(&qca->hci_ibs_lock);
 
-	serial_clock_vote(HCI_IBS_RX_VOTE_CLOCK_OFF, hu);
+	clock = serial_clock_vote(HCI_IBS_RX_VOTE_CLOCK_OFF, hu);
 
 	spin_unlock(&qca->hci_ibs_lock);
+
+	if (clock < 0)
+		qca_serial_clock(hu, false);
 }
 
 static void qca_wq_serial_tx_clock_vote_off(struct work_struct *work)
@@ -300,6 +363,7 @@ static void qca_wq_serial_tx_clock_vote_off(struct work_struct *work)
 	struct qca_data *qca = container_of(work, struct qca_data,
 					    ws_tx_vote_off);
 	struct hci_uart *hu = qca->hu;
+	int clock;
 
 	BT_DBG("hu %p tx clock vote off", hu);
 
@@ -311,9 +375,12 @@ static void qca_wq_serial_tx_clock_vote_off(struct work_struct *work)
 	/* Now that message queued to tty driver, vote for tty clocks off.
 	 * It is up to the tty driver to pend the clocks off until tx done.
 	 */
-	serial_clock_vote(HCI_IBS_TX_VOTE_CLOCK_OFF, hu);
+	clock = serial_clock_vote(HCI_IBS_TX_VOTE_CLOCK_OFF, hu);
 
 	spin_unlock(&qca->hci_ibs_lock);
+
+	if (clock < 0)
+		qca_serial_clock(hu, false);
 }
 
 static void hci_ibs_tx_idle_timeout(unsigned long arg)
@@ -419,6 +486,8 @@ static int qca_open(struct hci_uart *hu)
 	INIT_WORK(&qca->ws_tx_vote_off, qca_wq_serial_tx_clock_vote_off);
 
 	qca->hu = hu;
+	qca->soc_type = qca_soc_type_from_dt();
+	init_completion(&qca->drop_ev_comp);
 
 	/* Assume we start with both sides asleep -- extra wakes OK */
 	qca->tx_ibs_state = HCI_IBS_TX_ASLEEP;
@@ -540,6 +609,13 @@ static int qca_close(struct hci_uart *hu)
 	del_timer(&qca->tx_idle_timer);
 	del_timer(&qca->wake_retrans_timer);
 	destroy_workqueue(qca->workqueue);
+
+	/* No more vote-off work will run; return the UART clock reference
+	 * if the last vote left it on.
+	 */
+	if (qca->tx_vote || qca->rx_vote)
+		qca_serial_clock(hu, false);
+
 	qca->hu = NULL;
 
 	kfree_skb(qca->rx_skb);
@@ -797,10 +873,39 @@ static int qca_ibs_wake_ack(struct hci_dev *hdev, struct sk_buff *skb)
 	.lsize = 0, \
 	.maxlen = HCI_MAX_IBS_SIZE
 
+static int qca_recv_event(struct hci_dev *hdev, struct sk_buff *skb)
+{
+	struct hci_uart *hu = hci_get_drvdata(hdev);
+	struct qca_data *qca = hu->priv;
+
+	if (test_bit(QCA_DROP_VENDOR_EVENT, &qca->flags)) {
+		struct hci_event_hdr *hdr = (void *)skb->data;
+
+		/* For the WCN3990 the vendor command for a baudrate change
+		 * isn't sent as synchronous HCI command, because the
+		 * controller sends the corresponding vendor event with the
+		 * new baudrate. The event is received and properly decoded
+		 * after changing the baudrate of the host port. It needs to
+		 * be dropped, otherwise it can be misinterpreted as
+		 * response to a later firmware download command (also a
+		 * vendor command).
+		 */
+
+		if (hdr->evt == HCI_VENDOR_PKT)
+			complete(&qca->drop_ev_comp);
+
+		kfree_skb(skb);
+
+		return 0;
+	}
+
+	return hci_recv_frame(hdev, skb);
+}
+
 static const struct h4_recv_pkt qca_recv_pkts[] = {
 	{ H4_RECV_ACL,             .recv = hci_recv_frame    },
 	{ H4_RECV_SCO,             .recv = hci_recv_frame    },
-	{ H4_RECV_EVENT,           .recv = hci_recv_frame    },
+	{ H4_RECV_EVENT,           .recv = qca_recv_event    },
 	{ QCA_IBS_WAKE_IND_EVENT,  .recv = qca_ibs_wake_ind  },
 	{ QCA_IBS_WAKE_ACK_EVENT,  .recv = qca_ibs_wake_ack  },
 	{ QCA_IBS_SLEEP_IND_EVENT, .recv = qca_ibs_sleep_ind },
@@ -859,6 +964,8 @@ static uint8_t qca_get_baudrate_value(int speed)
 		return QCA_BAUDRATE_2000000;
 	case 3000000:
 		return QCA_BAUDRATE_3000000;
+	case 3200000:
+		return QCA_BAUDRATE_3200000;
 	case 3500000:
 		return QCA_BAUDRATE_3500000;
 	default:
@@ -871,9 +978,10 @@ static int qca_set_baudrate(struct hci_dev *hdev, uint8_t baudrate)
 	struct hci_uart *hu = hci_get_drvdata(hdev);
 	struct qca_data *qca = hu->priv;
 	struct sk_buff *skb;
+	unsigned long timeout;
 	u8 cmd[] = { 0x01, 0x48, 0xFC, 0x01, 0x00 };
 
-	if (baudrate > QCA_BAUDRATE_3000000)
+	if (baudrate > QCA_BAUDRATE_3200000)
 		return -EINVAL;
 
 	cmd[4] = baudrate;
@@ -891,15 +999,80 @@ static int qca_set_baudrate(struct hci_dev *hdev, uint8_t baudrate)
 	skb_queue_tail(&qca->txq, skb);
 	hci_uart_tx_wakeup(hu);
 
-	/* wait 300ms to change new baudrate on controller side
-	 * controller will come back after they receive this HCI command
-	 * then host can communicate with new baudrate to controller
+	/* Wait for the baudrate change request to be handed to the tty
+	 * (HCI_UART_SENDING covers the write work) and to leave the FIFO.
 	 */
-	set_current_state(TASK_UNINTERRUPTIBLE);
-	schedule_timeout(msecs_to_jiffies(BAUDRATE_SETTLE_TIMEOUT_MS));
-	set_current_state(TASK_RUNNING);
+	timeout = jiffies + msecs_to_jiffies(BAUDRATE_SETTLE_TIMEOUT_MS);
+	while ((!skb_queue_empty(&qca->txq) ||
+		test_bit(HCI_UART_SENDING, &hu->tx_state)) &&
+	       time_before(jiffies, timeout))
+		usleep_range(100, 200);
+
+	tty_wait_until_sent(hu->tty, msecs_to_jiffies(CMD_TRANS_TIMEOUT_MS));
+
+	/* Give the controller time to process the request.  ROME needs the
+	 * full settle time; the WCN3990 answers at the new rate instead.
+	 */
+	if (qca->soc_type == QCA_WCN3990)
+		msleep(10);
+	else
+		msleep(BAUDRATE_SETTLE_TIMEOUT_MS);
 
 	return 0;
+}
+
+static int qca_set_speed(struct hci_uart *hu, unsigned int speed)
+{
+	struct qca_data *qca = hu->priv;
+	struct hci_dev *hdev = hu->hdev;
+	bool wcn3990 = qca->soc_type == QCA_WCN3990;
+	int ret;
+
+	/* Disable flow control for wcn3990 to deassert RTS while
+	 * changing the baudrate of chip and host.
+	 */
+	if (wcn3990) {
+		hci_uart_set_flow_control(hu, true);
+		reinit_completion(&qca->drop_ev_comp);
+		set_bit(QCA_DROP_VENDOR_EVENT, &qca->flags);
+	}
+
+	BT_INFO("%s: Set UART speed to %d", hdev->name, speed);
+	ret = qca_set_baudrate(hdev, qca_get_baudrate_value(speed));
+	if (ret) {
+		BT_ERR("%s: Failed to change the baud rate (%d)", hdev->name,
+		       ret);
+		goto out;
+	}
+
+	/* The WCN3990 answers at the new speed the moment RTS is asserted,
+	 * so reconfigure the port and restore flow control in one go.
+	 */
+	if (wcn3990)
+		hci_uart_set_baudrate_flow_control(hu, speed);
+	else
+		hci_uart_set_baudrate(hu, speed);
+
+out:
+	if (wcn3990) {
+		if (ret)
+			hci_uart_set_flow_control(hu, false);
+
+		/* Wait for the controller to send the vendor event
+		 * for the baudrate change command.
+		 */
+		if (!ret &&
+		    !wait_for_completion_timeout(&qca->drop_ev_comp,
+						 msecs_to_jiffies(100))) {
+			BT_ERR("%s: Failed to change controller baudrate",
+			       hdev->name);
+			ret = -ETIMEDOUT;
+		}
+
+		clear_bit(QCA_DROP_VENDOR_EVENT, &qca->flags);
+	}
+
+	return ret;
 }
 
 static int qca_setup(struct hci_uart *hu)
@@ -907,12 +1080,16 @@ static int qca_setup(struct hci_uart *hu)
 	struct hci_dev *hdev = hu->hdev;
 	struct qca_data *qca = hu->priv;
 	unsigned int speed, qca_baudrate = QCA_BAUDRATE_115200;
+	u32 soc_ver = 0;
 	int ret;
-
-	BT_INFO("%s: ROME setup", hdev->name);
 
 	/* Patch downloading has to be done without IBS mode */
 	clear_bit(STATE_IN_BAND_SLEEP_ENABLED, &qca->flags);
+
+	/* Enable controller to do both LE scan and BR/EDR inquiry
+	 * simultaneously.
+	 */
+	set_bit(HCI_QUIRK_SIMULTANEOUS_DISCOVERY, &hdev->quirks);
 
 	/* Setup initial baudrate */
 	speed = 0;
@@ -924,28 +1101,56 @@ static int qca_setup(struct hci_uart *hu)
 	if (speed)
 		hci_uart_set_baudrate(hu, speed);
 
+	if (qca->soc_type == QCA_WCN3990) {
+		/* The SoC has already been powered and sent its power-on
+		 * pulse by whoever attached the line discipline (there is
+		 * no serdev here to do it in-kernel, and the UART must be
+		 * reopened after the pulse anyway).  It answers the version
+		 * request at the initial speed; everything after that runs
+		 * at the operational speed.
+		 */
+		BT_INFO("%s: setting up wcn3990", hdev->name);
+
+		/* The NVM carries a placeholder address; the board must
+		 * provide the real one (mgmt Set Public Address), as with
+		 * mainline's local-bd-address property.
+		 */
+		set_bit(HCI_QUIRK_INVALID_BDADDR, &hdev->quirks);
+
+		ret = qca_read_soc_version(hdev, &soc_ver);
+		if (ret)
+			return ret;
+	} else {
+		BT_INFO("%s: ROME setup", hdev->name);
+	}
+
 	/* Setup user speed if needed */
 	speed = 0;
 	if (hu->oper_speed)
 		speed = hu->oper_speed;
+	else if (qca->soc_type == QCA_WCN3990)
+		speed = 3200000;
 	else if (hu->proto->oper_speed)
 		speed = hu->proto->oper_speed;
 
 	if (speed) {
-		qca_baudrate = qca_get_baudrate_value(speed);
-
-		BT_INFO("%s: Set UART speed to %d", hdev->name, speed);
-		ret = qca_set_baudrate(hdev, qca_baudrate);
-		if (ret) {
-			BT_ERR("%s: Failed to change the baud rate (%d)",
-			       hdev->name, ret);
+		ret = qca_set_speed(hu, speed);
+		if (ret)
 			return ret;
-		}
-		hci_uart_set_baudrate(hu, speed);
+
+		qca_baudrate = qca_get_baudrate_value(speed);
 	}
 
+	if (qca->soc_type != QCA_WCN3990) {
+		ret = qca_read_soc_version(hdev, &soc_ver);
+		if (ret)
+			return ret;
+	}
+
+	BT_INFO("%s: QCA controller version 0x%08x", hdev->name, soc_ver);
+
 	/* Setup patch / NVM configurations */
-	ret = qca_uart_setup_rome(hdev, qca_baudrate);
+	ret = qca_uart_setup(hdev, qca_baudrate, qca->soc_type, soc_ver);
 	if (!ret) {
 		set_bit(STATE_IN_BAND_SLEEP_ENABLED, &qca->flags);
 		qca_debugfs_init(hdev);
@@ -961,7 +1166,10 @@ static int qca_setup(struct hci_uart *hu)
 	}
 
 	/* Setup bdaddr */
-	hu->hdev->set_bdaddr = qca_set_bdaddr_rome;
+	if (qca->soc_type == QCA_WCN3990)
+		hu->hdev->set_bdaddr = qca_set_bdaddr;
+	else
+		hu->hdev->set_bdaddr = qca_set_bdaddr_rome;
 
 	return ret;
 }
