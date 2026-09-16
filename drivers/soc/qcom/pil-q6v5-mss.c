@@ -62,7 +62,26 @@ static void log_modem_sfr(void)
         mmi_set_pureason(PU_REASON_MODEM_RESET);
 	smem_reason = smem_get_entry_no_rlock(SMEM_SSR_REASON_MSS0, &size, 0,
 							SMEM_ANY_HOST_FLAG);
-	if (!smem_reason || !size) {
+	if (IS_ERR_OR_NULL(smem_reason) || !size || !smem_reason[0]) {
+		/*
+		 * Diagnostic-only fallback -- does not change SSR/restart
+		 * policy anywhere else in this file. The lookup above
+		 * (SMEM_ANY_HOST_FLAG) only ever searches the SMEM common
+		 * partition (msm_smem.c's __smem_get_entry_secure); on at
+		 * least one firmware build on this device it has come back
+		 * empty every single boot even though the modem's own SFR
+		 * item is pre-filled at err-init time ("SFR Init: wdog or
+		 * kernel error suspected."), which points at the item
+		 * actually living in the apps<->modem private partition
+		 * instead. Retry there (to_proc=SMEM_MODEM, no ANY_HOST
+		 * flag) before giving up, so a real crash string gets
+		 * printed when the modem wrote one, whichever partition it
+		 * landed in.
+		 */
+		smem_reason = smem_get_entry_no_rlock(SMEM_SSR_REASON_MSS0,
+							&size, SMEM_MODEM, 0);
+	}
+	if (IS_ERR_OR_NULL(smem_reason) || !size) {
 		pr_err("modem subsystem failure reason: (unknown, smem_get_entry_no_rlock failed).\n");
 		return;
 	}
