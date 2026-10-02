@@ -34,6 +34,7 @@
 #include <linux/of.h>
 #include <linux/tty.h>
 #include <asm/ioctls.h>
+#include <asm/unaligned.h>
 
 #include <net/bluetooth/bluetooth.h>
 #include <net/bluetooth/hci_core.h>
@@ -55,6 +56,9 @@
 #define IBS_TX_IDLE_TIMEOUT_MS		2000
 #define BAUDRATE_SETTLE_TIMEOUT_MS	300
 #define CMD_TRANS_TIMEOUT_MS		100
+
+/* Controller firmware debug logs arrive as ACL data on this handle */
+#define QCA_DEBUG_HANDLE	0x2EDC
 
 /* Which SoC sits on the other end of the line discipline.  Without serdev
  * there is no device to bind to, so the board's device tree is consulted:
@@ -902,8 +906,21 @@ static int qca_recv_event(struct hci_dev *hdev, struct sk_buff *skb)
 	return hci_recv_frame(hdev, skb);
 }
 
+static int qca_recv_acl_data(struct hci_dev *hdev, struct sk_buff *skb)
+{
+	/* We receive debug logs from chip as an ACL packets.
+	 * Instead of sending the data to ACL to decode the
+	 * received data, we are pushing them to the above layers
+	 * as a diagnostic packet.
+	 */
+	if (get_unaligned_le16(skb->data) == QCA_DEBUG_HANDLE)
+		return hci_recv_diag(hdev, skb);
+
+	return hci_recv_frame(hdev, skb);
+}
+
 static const struct h4_recv_pkt qca_recv_pkts[] = {
-	{ H4_RECV_ACL,             .recv = hci_recv_frame    },
+	{ H4_RECV_ACL,             .recv = qca_recv_acl_data },
 	{ H4_RECV_SCO,             .recv = hci_recv_frame    },
 	{ H4_RECV_EVENT,           .recv = qca_recv_event    },
 	{ QCA_IBS_WAKE_IND_EVENT,  .recv = qca_ibs_wake_ind  },
