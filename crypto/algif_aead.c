@@ -77,7 +77,11 @@ static inline bool aead_sufficient_data(struct aead_ctx *ctx)
 {
 	unsigned as = crypto_aead_authsize(crypto_aead_reqtfm(&ctx->aead_req));
 
-	return ctx->used >= ctx->aead_assoclen + as;
+	/*
+	 * The minimum amount of memory needed for an AEAD cipher is
+	 * the AAD and in case of decryption the tag.
+	 */
+	return ctx->used >= ctx->aead_assoclen + (ctx->enc ? 0 : as);
 }
 
 static void aead_put_sgl(struct sock *sk)
@@ -409,17 +413,45 @@ static int aead_recvmsg(struct socket *sock, struct msghdr *msg, size_t ignored,
 	if (!aead_sufficient_data(ctx))
 		goto unlock;
 
-	outlen = used;
+	/*
+	 * Encryption no longer needs a tag's worth of input, so an empty
+	 * request gets this far: refuse it before sg_mark_end() would index
+	 * the TX list at -1.
+	 */
+	if (!sgl->cur) {
+		err = -EINVAL;
+		goto unlock;
+	}
+
+	/*
+	 * Calculate the minimum output buffer size holding the result of the
+	 * cipher operation. When encrypting data, the receiving buffer is
+	 * larger by the tag length compared to the input buffer as the
+	 * encryption operation generates the tag. For decryption, the input
+	 * buffer provides the tag which is consumed resulting in only the
+	 * plaintext without a buffer for the tag returned to the caller.
+	 */
+	if (ctx->enc)
+		outlen = used + as;
+	else
+		outlen = used - as;
 
 	/*
 	 * The cipher operation input data is reduced by the associated data
 	 * length as this data is processed separately later on.
 	 */
-	used -= ctx->aead_assoclen + (ctx->enc ? as : 0);
+	used -= ctx->aead_assoclen;
 
 	/* convert iovecs of output buffers into scatterlists */
-	while (iov_iter_count(&msg->msg_iter)) {
-		size_t seglen = min_t(size_t, iov_iter_count(&msg->msg_iter),
+	while (outlen > usedpages && iov_iter_count(&msg->msg_iter)) {
+		size_t seglen;
+
+		/* a segment larger than ALG_MAX_PAGES takes several entries */
+		if (cnt >= RSGL_MAX_ENTRIES) {
+			err = -EINVAL;
+			goto unlock;
+		}
+		seglen = min_t(size_t, iov_iter_count(&msg->msg_iter),
 				      (outlen - usedpages));
 
 		/* make one iovec available as scatterlist */
@@ -432,17 +464,24 @@ static int aead_recvmsg(struct socket *sock, struct msghdr *msg, size_t ignored,
 		if (cnt)
 			af_alg_link_sg(&ctx->rsgl[cnt-1], &ctx->rsgl[cnt]);
 
-		/* we do not need more iovecs as we have sufficient memory */
-		if (outlen <= usedpages)
-			break;
-		iov_iter_advance(&msg->msg_iter, err);
+		/*
+		 * Count every mapped entry, including the last one, so that
+		 * unlock releases all of them (the old early break skipped
+		 * the final entry and leaked its pinned pages).
+		 */
 		cnt++;
+		iov_iter_advance(&msg->msg_iter, err);
 	}
 
-	err = -EINVAL;
-	/* ensure output buffer is sufficiently large */
-	if (usedpages < outlen)
+	/*
+	 * Ensure the output buffer is sufficiently large. A decryption of a
+	 * bare tag has outlen 0 and maps nothing, which would hand the cipher
+	 * a stale or uninitialised rsgl[0] as destination: refuse it too.
+	 */
+	if (!cnt || usedpages < outlen) {
+		err = -EINVAL;
 		goto unlock;
+	}
 
 	sg_mark_end(sgl->sg + sgl->cur - 1);
 
