@@ -33,14 +33,14 @@ struct dss_io_data {
 	void __iomem *base;
 };
 
-void dss_reg_w(struct dss_io_data *io, u32 offset, u32 value, u32 debug);
-u32 dss_reg_r(struct dss_io_data *io, u32 offset, u32 debug);
-void dss_reg_dump(void __iomem *base, u32 len, const char *prefix, u32 debug);
+void sde_dss_reg_w(struct dss_io_data *io, u32 offset, u32 value, u32 debug);
+u32 sde_dss_reg_r(struct dss_io_data *io, u32 offset, u32 debug);
+void sde_dss_reg_dump(void __iomem *base, u32 len, const char *prefix, u32 debug);
 
-#define DSS_REG_W_ND(io, offset, val)  dss_reg_w(io, offset, val, false)
-#define DSS_REG_W(io, offset, val)     dss_reg_w(io, offset, val, true)
-#define DSS_REG_R_ND(io, offset)       dss_reg_r(io, offset, false)
-#define DSS_REG_R(io, offset)          dss_reg_r(io, offset, true)
+#define DSS_REG_W_ND(io, offset, val)  sde_dss_reg_w(io, offset, val, false)
+#define DSS_REG_W(io, offset, val)     sde_dss_reg_w(io, offset, val, true)
+#define DSS_REG_R_ND(io, offset)       sde_dss_reg_r(io, offset, false)
+#define DSS_REG_R(io, offset)          sde_dss_reg_r(io, offset, true)
 
 enum dss_vreg_type {
 	DSS_REG_LDO,
@@ -91,21 +91,21 @@ struct dss_module_power {
 	struct dss_clk *clk_config;
 };
 
-int msm_dss_ioremap_byname(struct platform_device *pdev,
+int sde_dss_ioremap_byname(struct platform_device *pdev,
 	struct dss_io_data *io_data, const char *name);
-void msm_dss_iounmap(struct dss_io_data *io_data);
+void sde_dss_iounmap(struct dss_io_data *io_data);
 
-int msm_dss_enable_gpio(struct dss_gpio *in_gpio, int num_gpio, int enable);
-int msm_dss_gpio_enable(struct dss_gpio *in_gpio, int num_gpio, int enable);
+int sde_dss_enable_gpio(struct dss_gpio *in_gpio, int num_gpio, int enable);
+int sde_dss_gpio_enable(struct dss_gpio *in_gpio, int num_gpio, int enable);
 
-int msm_dss_config_vreg(struct device *dev, struct dss_vreg *in_vreg,
+int sde_dss_config_vreg(struct device *dev, struct dss_vreg *in_vreg,
 	int num_vreg, int config);
-int msm_dss_enable_vreg(struct dss_vreg *in_vreg, int num_vreg,	int enable);
+int sde_dss_enable_vreg(struct dss_vreg *in_vreg, int num_vreg,	int enable);
 
-int msm_dss_get_clk(struct device *dev, struct dss_clk *clk_arry, int num_clk);
-void msm_dss_put_clk(struct dss_clk *clk_arry, int num_clk);
-int msm_dss_clk_set_rate(struct dss_clk *clk_arry, int num_clk);
-int msm_dss_enable_clk(struct dss_clk *clk_arry, int num_clk, int enable);
+int sde_dss_get_clk(struct device *dev, struct dss_clk *clk_arry, int num_clk);
+void sde_dss_put_clk(struct dss_clk *clk_arry, int num_clk);
+int sde_dss_clk_set_rate(struct dss_clk *clk_arry, int num_clk);
+int sde_dss_enable_clk(struct dss_clk *clk_arry, int num_clk, int enable);
 
 int sde_i2c_byte_read(struct i2c_client *client, uint8_t slave_addr,
 		       uint8_t reg_offset, uint8_t *read_buf);

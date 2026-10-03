@@ -71,7 +71,7 @@ int ddc_clear_irq(struct hdmi *hdmi)
 	return 0;
 }
 
-int hdmi_ddc_read(struct hdmi *hdmi, u16 addr, u8 offset,
+int msm_drm_hdmi_ddc_read(struct hdmi *hdmi, u16 addr, u8 offset,
 u8 *data, u16 data_len, bool self_retry)
 {
 	int rc;
@@ -109,7 +109,7 @@ retry:
 
 #define HDCP_DDC_WRITE_MAX_BYTE_NUM 1024
 
-int hdmi_ddc_write(struct hdmi *hdmi, u16 addr, u8 offset,
+int msm_drm_hdmi_ddc_write(struct hdmi *hdmi, u16 addr, u8 offset,
 				   u8 *data, u16 data_len, bool self_retry)
 {
 	int rc;

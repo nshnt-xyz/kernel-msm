@@ -18,7 +18,7 @@
 #include <linux/sde_io_util.h>
 
 #define MAX_I2C_CMDS  16
-void dss_reg_w(struct dss_io_data *io, u32 offset, u32 value, u32 debug)
+void sde_dss_reg_w(struct dss_io_data *io, u32 offset, u32 value, u32 debug)
 {
 	u32 in_val;
 
@@ -41,10 +41,10 @@ void dss_reg_w(struct dss_io_data *io, u32 offset, u32 value, u32 debug)
 			(u32)(unsigned long)(io->base + offset),
 			value, in_val);
 	}
-} /* dss_reg_w */
-EXPORT_SYMBOL(dss_reg_w);
+} /* sde_dss_reg_w */
+EXPORT_SYMBOL(sde_dss_reg_w);
 
-u32 dss_reg_r(struct dss_io_data *io, u32 offset, u32 debug)
+u32 sde_dss_reg_r(struct dss_io_data *io, u32 offset, u32 debug)
 {
 	u32 value;
 
@@ -66,19 +66,19 @@ u32 dss_reg_r(struct dss_io_data *io, u32 offset, u32 debug)
 			(u32)(unsigned long)(io->base + offset), value);
 
 	return value;
-} /* dss_reg_r */
-EXPORT_SYMBOL(dss_reg_r);
+} /* sde_dss_reg_r */
+EXPORT_SYMBOL(sde_dss_reg_r);
 
-void dss_reg_dump(void __iomem *base, u32 length, const char *prefix,
+void sde_dss_reg_dump(void __iomem *base, u32 length, const char *prefix,
 	u32 debug)
 {
 	if (debug)
 		print_hex_dump(KERN_INFO, prefix, DUMP_PREFIX_OFFSET, 32, 4,
 			(void *)base, length, false);
-} /* dss_reg_dump */
-EXPORT_SYMBOL(dss_reg_dump);
+} /* sde_dss_reg_dump */
+EXPORT_SYMBOL(sde_dss_reg_dump);
 
-static struct resource *msm_dss_get_res_byname(struct platform_device *pdev,
+static struct resource *sde_dss_get_res_byname(struct platform_device *pdev,
 	unsigned int type, const char *name)
 {
 	struct resource *res = NULL;
@@ -88,10 +88,10 @@ static struct resource *msm_dss_get_res_byname(struct platform_device *pdev,
 		DEV_ERR("%s: '%s' resource not found\n", __func__, name);
 
 	return res;
-} /* msm_dss_get_res_byname */
-EXPORT_SYMBOL(msm_dss_get_res_byname);
+} /* sde_dss_get_res_byname */
+EXPORT_SYMBOL(sde_dss_get_res_byname);
 
-int msm_dss_ioremap_byname(struct platform_device *pdev,
+int sde_dss_ioremap_byname(struct platform_device *pdev,
 	struct dss_io_data *io_data, const char *name)
 {
 	struct resource *res = NULL;
@@ -102,9 +102,9 @@ int msm_dss_ioremap_byname(struct platform_device *pdev,
 		return -EINVAL;
 	}
 
-	res = msm_dss_get_res_byname(pdev, IORESOURCE_MEM, name);
+	res = sde_dss_get_res_byname(pdev, IORESOURCE_MEM, name);
 	if (!res) {
-		DEV_ERR("%pS->%s: '%s' msm_dss_get_res_byname failed\n",
+		DEV_ERR("%pS->%s: '%s' sde_dss_get_res_byname failed\n",
 			__builtin_return_address(0), __func__, name);
 		return -ENODEV;
 	}
@@ -118,10 +118,10 @@ int msm_dss_ioremap_byname(struct platform_device *pdev,
 	}
 
 	return 0;
-} /* msm_dss_ioremap_byname */
-EXPORT_SYMBOL(msm_dss_ioremap_byname);
+} /* sde_dss_ioremap_byname */
+EXPORT_SYMBOL(sde_dss_ioremap_byname);
 
-void msm_dss_iounmap(struct dss_io_data *io_data)
+void sde_dss_iounmap(struct dss_io_data *io_data)
 {
 	if (!io_data) {
 		DEV_ERR("%pS->%s: invalid input\n",
@@ -134,10 +134,10 @@ void msm_dss_iounmap(struct dss_io_data *io_data)
 		io_data->base = NULL;
 	}
 	io_data->len = 0;
-} /* msm_dss_iounmap */
-EXPORT_SYMBOL(msm_dss_iounmap);
+} /* sde_dss_iounmap */
+EXPORT_SYMBOL(sde_dss_iounmap);
 
-int msm_dss_config_vreg(struct device *dev, struct dss_vreg *in_vreg,
+int sde_dss_config_vreg(struct device *dev, struct dss_vreg *in_vreg,
 	int num_vreg, int config)
 {
 	int i = 0, rc = 0;
@@ -210,10 +210,10 @@ vreg_get_fail:
 		goto vreg_unconfig;
 	}
 	return rc;
-} /* msm_dss_config_vreg */
-EXPORT_SYMBOL(msm_dss_config_vreg);
+} /* sde_dss_config_vreg */
+EXPORT_SYMBOL(sde_dss_config_vreg);
 
-int msm_dss_enable_vreg(struct dss_vreg *in_vreg, int num_vreg, int enable)
+int sde_dss_enable_vreg(struct dss_vreg *in_vreg, int num_vreg, int enable)
 {
 	int i = 0, rc = 0;
 	bool need_sleep;
@@ -282,10 +282,10 @@ vreg_set_opt_mode_fail:
 	}
 
 	return rc;
-} /* msm_dss_enable_vreg */
-EXPORT_SYMBOL(msm_dss_enable_vreg);
+} /* sde_dss_enable_vreg */
+EXPORT_SYMBOL(sde_dss_enable_vreg);
 
-int msm_dss_enable_gpio(struct dss_gpio *in_gpio, int num_gpio, int enable)
+int sde_dss_enable_gpio(struct dss_gpio *in_gpio, int num_gpio, int enable)
 {
 	int i = 0, rc = 0;
 
@@ -322,10 +322,10 @@ disable_gpio:
 			gpio_free(in_gpio[i].gpio);
 
 	return rc;
-} /* msm_dss_enable_gpio */
-EXPORT_SYMBOL(msm_dss_enable_gpio);
+} /* sde_dss_enable_gpio */
+EXPORT_SYMBOL(sde_dss_enable_gpio);
 
-void msm_dss_put_clk(struct dss_clk *clk_arry, int num_clk)
+void sde_dss_put_clk(struct dss_clk *clk_arry, int num_clk)
 {
 	int i;
 
@@ -334,10 +334,10 @@ void msm_dss_put_clk(struct dss_clk *clk_arry, int num_clk)
 			clk_put(clk_arry[i].clk);
 		clk_arry[i].clk = NULL;
 	}
-} /* msm_dss_put_clk */
-EXPORT_SYMBOL(msm_dss_put_clk);
+} /* sde_dss_put_clk */
+EXPORT_SYMBOL(sde_dss_put_clk);
 
-int msm_dss_get_clk(struct device *dev, struct dss_clk *clk_arry, int num_clk)
+int sde_dss_get_clk(struct device *dev, struct dss_clk *clk_arry, int num_clk)
 {
 	int i, rc = 0;
 
@@ -355,13 +355,13 @@ int msm_dss_get_clk(struct device *dev, struct dss_clk *clk_arry, int num_clk)
 	return rc;
 
 error:
-	msm_dss_put_clk(clk_arry, num_clk);
+	sde_dss_put_clk(clk_arry, num_clk);
 
 	return rc;
-} /* msm_dss_get_clk */
-EXPORT_SYMBOL(msm_dss_get_clk);
+} /* sde_dss_get_clk */
+EXPORT_SYMBOL(sde_dss_get_clk);
 
-int msm_dss_clk_set_rate(struct dss_clk *clk_arry, int num_clk)
+int sde_dss_clk_set_rate(struct dss_clk *clk_arry, int num_clk)
 {
 	int i, rc = 0;
 
@@ -392,10 +392,10 @@ int msm_dss_clk_set_rate(struct dss_clk *clk_arry, int num_clk)
 	}
 
 	return rc;
-} /* msm_dss_clk_set_rate */
-EXPORT_SYMBOL(msm_dss_clk_set_rate);
+} /* sde_dss_clk_set_rate */
+EXPORT_SYMBOL(sde_dss_clk_set_rate);
 
-int msm_dss_enable_clk(struct dss_clk *clk_arry, int num_clk, int enable)
+int sde_dss_enable_clk(struct dss_clk *clk_arry, int num_clk, int enable)
 {
 	int i, rc = 0;
 
@@ -419,7 +419,7 @@ int msm_dss_enable_clk(struct dss_clk *clk_arry, int num_clk, int enable)
 			}
 
 			if (rc) {
-				msm_dss_enable_clk(&clk_arry[i],
+				sde_dss_enable_clk(&clk_arry[i],
 					i, false);
 				break;
 			}
@@ -440,8 +440,8 @@ int msm_dss_enable_clk(struct dss_clk *clk_arry, int num_clk, int enable)
 	}
 
 	return rc;
-} /* msm_dss_enable_clk */
-EXPORT_SYMBOL(msm_dss_enable_clk);
+} /* sde_dss_enable_clk */
+EXPORT_SYMBOL(sde_dss_enable_clk);
 
 
 int sde_i2c_byte_read(struct i2c_client *client, uint8_t slave_addr,

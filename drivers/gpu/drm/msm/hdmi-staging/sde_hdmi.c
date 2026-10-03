@@ -1876,7 +1876,7 @@ int sde_hdmi_scdc_read(struct hdmi *hdmi, u32 data_type, u32 *val)
 		break;
 	}
 
-	rc = hdmi_ddc_read(hdmi, dev_addr, offset, data_buf,
+	rc = msm_drm_hdmi_ddc_read(hdmi, dev_addr, offset, data_buf,
 					   data_len, true);
 	if (rc) {
 		SDE_ERROR("DDC Read failed for %d\n", data_type);
@@ -1949,7 +1949,7 @@ int sde_hdmi_scdc_write(struct hdmi *hdmi, u32 data_type, u32 val)
 		dev_addr = 0xA8;
 		data_len = 1;
 		offset = HDMI_SCDC_TMDS_CONFIG;
-		rc = hdmi_ddc_read(hdmi, dev_addr, offset, &read_val,
+		rc = msm_drm_hdmi_ddc_read(hdmi, dev_addr, offset, &read_val,
 						   data_len, true);
 		if (rc) {
 			SDE_ERROR("scdc read failed\n");
@@ -1974,7 +1974,7 @@ int sde_hdmi_scdc_write(struct hdmi *hdmi, u32 data_type, u32 val)
 		return -EINVAL;
 	}
 
-	rc = hdmi_ddc_write(hdmi, dev_addr, offset, data_buf,
+	rc = msm_drm_hdmi_ddc_write(hdmi, dev_addr, offset, data_buf,
 						data_len, true);
 	if (rc) {
 		SDE_ERROR("DDC Read failed for %d\n", data_type);

@@ -455,7 +455,7 @@ static int sde_hdmi_ddc_read_retry(struct sde_hdmi *display)
 		}
 
 		/* Calling upstream ddc read method */
-		status = hdmi_ddc_read(hdmi, ddc_data->dev_addr,
+		status = msm_drm_hdmi_ddc_read(hdmi, ddc_data->dev_addr,
 			ddc_data->offset,
 			ddc_data->data_buf, ddc_data->request_len,
 			false);
@@ -512,7 +512,7 @@ int sde_hdmi_ddc_read(void *cb_data)
 	}
 
 	return rc;
-} /* hdmi_ddc_read */
+} /* msm_drm_hdmi_ddc_read */
 
 int sde_hdmi_ddc_write(void *cb_data)
 {
@@ -557,7 +557,7 @@ int sde_hdmi_ddc_write(void *cb_data)
 			hdmi->busy_wait_us = busy_wait_us;
 		}
 
-		status = hdmi_ddc_write(hdmi,
+		status = msm_drm_hdmi_ddc_write(hdmi,
 			ddc_data->dev_addr, ddc_data->offset,
 			ddc_data->data_buf, ddc_data->data_len,
 			false);
@@ -581,7 +581,7 @@ int sde_hdmi_ddc_write(void *cb_data)
 	HDMI_UTIL_DEBUG("%s: success\n", ddc_data->what);
 error:
 	return status;
-} /* hdmi_ddc_write */
+} /* msm_drm_hdmi_ddc_write */
 
 bool sde_hdmi_tx_is_hdcp_enabled(struct sde_hdmi *hdmi_ctrl)
 {

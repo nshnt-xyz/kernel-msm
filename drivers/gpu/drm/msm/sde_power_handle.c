@@ -660,20 +660,20 @@ int sde_power_resource_init(struct platform_device *pdev,
 		goto parse_vreg_err;
 	}
 
-	rc = msm_dss_config_vreg(&pdev->dev,
+	rc = sde_dss_config_vreg(&pdev->dev,
 				mp->vreg_config, mp->num_vreg, 1);
 	if (rc) {
 		pr_err("vreg config failed rc=%d\n", rc);
 		goto vreg_err;
 	}
 
-	rc = msm_dss_get_clk(&pdev->dev, mp->clk_config, mp->num_clk);
+	rc = sde_dss_get_clk(&pdev->dev, mp->clk_config, mp->num_clk);
 	if (rc) {
 		pr_err("clock get failed rc=%d\n", rc);
 		goto clk_err;
 	}
 
-	rc = msm_dss_clk_set_rate(mp->clk_config, mp->num_clk);
+	rc = sde_dss_clk_set_rate(mp->clk_config, mp->num_clk);
 	if (rc) {
 		pr_err("clock set rate failed rc=%d\n", rc);
 		goto bus_err;
@@ -699,9 +699,9 @@ int sde_power_resource_init(struct platform_device *pdev,
 data_bus_err:
 	sde_power_reg_bus_unregister(phandle->reg_bus_hdl);
 bus_err:
-	msm_dss_put_clk(mp->clk_config, mp->num_clk);
+	sde_dss_put_clk(mp->clk_config, mp->num_clk);
 clk_err:
-	msm_dss_config_vreg(&pdev->dev, mp->vreg_config, mp->num_vreg, 0);
+	sde_dss_config_vreg(&pdev->dev, mp->vreg_config, mp->num_vreg, 0);
 vreg_err:
 	devm_kfree(&pdev->dev, mp->vreg_config);
 	mp->num_vreg = 0;
@@ -727,9 +727,9 @@ void sde_power_resource_deinit(struct platform_device *pdev,
 
 	sde_power_reg_bus_unregister(phandle->reg_bus_hdl);
 
-	msm_dss_put_clk(mp->clk_config, mp->num_clk);
+	sde_dss_put_clk(mp->clk_config, mp->num_clk);
 
-	msm_dss_config_vreg(&pdev->dev, mp->vreg_config, mp->num_vreg, 0);
+	sde_dss_config_vreg(&pdev->dev, mp->vreg_config, mp->num_vreg, 0);
 
 	if (mp->clk_config)
 		devm_kfree(&pdev->dev, mp->clk_config);
@@ -788,7 +788,7 @@ int sde_power_resource_enable(struct sde_power_handle *phandle,
 		goto end;
 
 	if (enable) {
-		rc = msm_dss_enable_vreg(mp->vreg_config, mp->num_vreg, enable);
+		rc = sde_dss_enable_vreg(mp->vreg_config, mp->num_vreg, enable);
 		if (rc) {
 			pr_err("failed to enable vregs rc=%d\n", rc);
 			goto vreg_err;
@@ -801,18 +801,18 @@ int sde_power_resource_enable(struct sde_power_handle *phandle,
 			goto reg_bus_hdl_err;
 		}
 
-		rc = msm_dss_enable_clk(mp->clk_config, mp->num_clk, enable);
+		rc = sde_dss_enable_clk(mp->clk_config, mp->num_clk, enable);
 		if (rc) {
 			pr_err("clock enable failed rc:%d\n", rc);
 			goto clk_err;
 		}
 	} else {
-		msm_dss_enable_clk(mp->clk_config, mp->num_clk, enable);
+		sde_dss_enable_clk(mp->clk_config, mp->num_clk, enable);
 
 		sde_power_reg_bus_update(phandle->reg_bus_hdl,
 							max_usecase_ndx);
 
-		msm_dss_enable_vreg(mp->vreg_config, mp->num_vreg, enable);
+		sde_dss_enable_vreg(mp->vreg_config, mp->num_vreg, enable);
 	}
 
 end:
@@ -822,7 +822,7 @@ end:
 clk_err:
 	sde_power_reg_bus_update(phandle->reg_bus_hdl, prev_usecase_ndx);
 reg_bus_hdl_err:
-	msm_dss_enable_vreg(mp->vreg_config, mp->num_vreg, 0);
+	sde_dss_enable_vreg(mp->vreg_config, mp->num_vreg, 0);
 vreg_err:
 	phandle->current_usecase_ndx = prev_usecase_ndx;
 	mutex_unlock(&phandle->phandle_lock);
@@ -848,7 +848,7 @@ int sde_power_clk_set_rate(struct sde_power_handle *phandle, char *clock_name,
 				rate = mp->clk_config[i].max_rate;
 
 			mp->clk_config[i].rate = rate;
-			rc = msm_dss_clk_set_rate(mp->clk_config, mp->num_clk);
+			rc = sde_dss_clk_set_rate(mp->clk_config, mp->num_clk);
 			break;
 		}
 	}

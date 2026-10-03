@@ -218,9 +218,9 @@ struct i2c_adapter *hdmi_i2c_init(struct hdmi *hdmi);
 /*
  * DDC utility functions
  */
-int hdmi_ddc_read(struct hdmi *hdmi, u16 addr, u8 offset,
+int msm_drm_hdmi_ddc_read(struct hdmi *hdmi, u16 addr, u8 offset,
 				  u8 *data, u16 data_len, bool self_retry);
-int hdmi_ddc_write(struct hdmi *hdmi, u16 addr, u8 offset,
+int msm_drm_hdmi_ddc_write(struct hdmi *hdmi, u16 addr, u8 offset,
 				   u8 *data, u16 data_len, bool self_retry);
 /*
  * hdcp

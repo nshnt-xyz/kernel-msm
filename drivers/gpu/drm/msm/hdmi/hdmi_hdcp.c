@@ -599,7 +599,7 @@ static int hdmi_hdcp_send_aksv_an(struct hdmi_hdcp_ctrl *hdcp_ctrl)
 	aksv[4] =  link0_aksv_1        & 0xFF;
 
 	/* Write An to offset 0x18 */
-	rc = hdmi_ddc_write(hdmi, HDCP_PORT_ADDR, 0x18, (u8 *)link0_an,
+	rc = msm_drm_hdmi_ddc_write(hdmi, HDCP_PORT_ADDR, 0x18, (u8 *)link0_an,
 		(u16)sizeof(link0_an));
 	if (rc) {
 		pr_err("%s:An write failed\n", __func__);
@@ -608,7 +608,7 @@ static int hdmi_hdcp_send_aksv_an(struct hdmi_hdcp_ctrl *hdcp_ctrl)
 	DBG("Link0-An=%08x%08x", link0_an[0], link0_an[1]);
 
 	/* Write AKSV to offset 0x10 */
-	rc = hdmi_ddc_write(hdmi, HDCP_PORT_ADDR, 0x10, aksv, 5);
+	rc = msm_drm_hdmi_ddc_write(hdmi, HDCP_PORT_ADDR, 0x10, aksv, 5);
 	if (rc) {
 		pr_err("%s:AKSV write failed\n", __func__);
 		return rc;
@@ -626,7 +626,7 @@ static int hdmi_hdcp_recv_bksv(struct hdmi_hdcp_ctrl *hdcp_ctrl)
 	u32 reg[2], data[2];
 
 	/* Read BKSV at offset 0x00 */
-	rc = hdmi_ddc_read(hdmi, HDCP_PORT_ADDR, 0x00, bksv, 5);
+	rc = msm_drm_hdmi_ddc_read(hdmi, HDCP_PORT_ADDR, 0x00, bksv, 5);
 	if (rc) {
 		pr_err("%s:BKSV read failed\n", __func__);
 		return rc;
@@ -663,7 +663,7 @@ static int hdmi_hdcp_recv_bcaps(struct hdmi_hdcp_ctrl *hdcp_ctrl)
 	u32 reg, data;
 	u8 bcaps;
 
-	rc = hdmi_ddc_read(hdmi, HDCP_PORT_ADDR, 0x40, &bcaps, 1);
+	rc = msm_drm_hdmi_ddc_read(hdmi, HDCP_PORT_ADDR, 0x40, &bcaps, 1);
 	if (rc) {
 		pr_err("%s:BCAPS read failed\n", __func__);
 		return rc;
@@ -750,7 +750,7 @@ static int hdmi_hdcp_auth_part1_recv_r0(struct hdmi_hdcp_ctrl *hdcp_ctrl)
 		return rc;
 
 	/* Read R0' at offset 0x08 */
-	rc = hdmi_ddc_read(hdmi, HDCP_PORT_ADDR, 0x08, buf, 2);
+	rc = msm_drm_hdmi_ddc_read(hdmi, HDCP_PORT_ADDR, 0x08, buf, 2);
 	if (rc) {
 		pr_err("%s:R0' read failed\n", __func__);
 		return rc;
@@ -803,7 +803,7 @@ static int hdmi_hdcp_recv_check_bstatus(struct hdmi_hdcp_ctrl *hdcp_ctrl,
 	u8 buf[2];
 
 	/* Read BSTATUS at offset 0x41 */
-	rc = hdmi_ddc_read(hdmi, HDCP_PORT_ADDR, 0x41, buf, 2);
+	rc = msm_drm_hdmi_ddc_read(hdmi, HDCP_PORT_ADDR, 0x41, buf, 2);
 	if (rc) {
 		pr_err("%s: BSTATUS read failed\n", __func__);
 		goto error;
@@ -876,7 +876,7 @@ static int hdmi_hdcp_auth_part2_wait_ksv_fifo_ready(
 	timeout_count = 100;
 	do {
 		/* Read BCAPS at offset 0x40 */
-		rc = hdmi_ddc_read(hdmi, HDCP_PORT_ADDR, 0x40, &bcaps, 1);
+		rc = msm_drm_hdmi_ddc_read(hdmi, HDCP_PORT_ADDR, 0x40, &bcaps, 1);
 		if (rc) {
 			pr_err("%s: BCAPS read failed\n", __func__);
 			return rc;
@@ -939,7 +939,7 @@ static int hdmi_hdcp_transfer_v_h(struct hdmi_hdcp_ctrl *hdcp_ctrl)
 
 	for (i = 0; i < size; i++) {
 		rd = &reg_data[i];
-		rc = hdmi_ddc_read(hdmi, HDCP_PORT_ADDR,
+		rc = msm_drm_hdmi_ddc_read(hdmi, HDCP_PORT_ADDR,
 			rd->off, (u8 *)&data[i], (u16)sizeof(data[i]));
 		if (rc) {
 			pr_err("%s: Read %s failed\n", __func__, rd->name);
@@ -964,7 +964,7 @@ static int hdmi_hdcp_recv_ksv_fifo(struct hdmi_hdcp_ctrl *hdcp_ctrl)
 
 	ksv_bytes = 5 * hdcp_ctrl->dev_count;
 
-	rc = hdmi_ddc_read(hdmi, HDCP_PORT_ADDR, 0x43,
+	rc = msm_drm_hdmi_ddc_read(hdmi, HDCP_PORT_ADDR, 0x43,
 		hdcp_ctrl->ksv_list, ksv_bytes);
 	if (rc)
 		pr_err("%s: KSV FIFO read failed\n", __func__);
